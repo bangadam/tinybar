@@ -45,6 +45,7 @@ enum ClaudeUsageAPI {
         var grants: [CodexUsageAPI.Lossy<Grant>]
 
         struct Grant: Decodable {
+            var label: String?
             var resetsLeft: Int
             var startsAt: String?
             var endsAt: String?
@@ -52,10 +53,21 @@ enum ClaudeUsageAPI {
             var paused: Bool
 
             enum CodingKeys: String, CodingKey {
+                case label
                 case resetsLeft = "resets_left"
                 case startsAt = "starts_at"
                 case endsAt = "ends_at"
                 case paused
+            }
+
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                // Display text only: a malformed label must not drop the reset.
+                label = try? c.decodeIfPresent(String.self, forKey: .label)
+                resetsLeft = try c.decode(Int.self, forKey: .resetsLeft)
+                startsAt = try c.decodeIfPresent(String.self, forKey: .startsAt)
+                endsAt = try c.decodeIfPresent(String.self, forKey: .endsAt)
+                paused = try c.decode(Bool.self, forKey: .paused)
             }
         }
 
@@ -72,7 +84,7 @@ enum ClaudeUsageAPI {
                 // An implausible count is malformed rather than a reason to draw 10,000 rows.
                 guard grant.resetsLeft <= 50 - out.count else { return [] }
                 for _ in 0..<grant.resetsLeft {
-                    out.append(BankedReset(id: "claude-\(out.count)", title: nil, status: "available", expiresAt: ends))
+                    out.append(BankedReset(id: "claude-\(out.count)", title: grant.label, status: "available", expiresAt: ends))
                 }
             }
             return out
@@ -97,7 +109,19 @@ enum ClaudeUsageAPI {
         var percent: Double?
         var resetsAt: String?
         var scope: Scope?
-        var isActive: Bool?
+
+        /// The model the limit is scoped to. Nil without one, and for "All models", which is the
+        /// plain weekly window again.
+        var modelName: String? {
+            guard let model = scope?.model else { return nil }
+            let id = model.id ?? ""
+            if model.displayName?.lowercased() == "all models" || id == "all-models" || id.hasSuffix("-all-models") {
+                return nil
+            }
+            return [model.displayName, model.id]
+                .compactMap { $0?.trimmingCharacters(in: .whitespaces) }
+                .first { !$0.isEmpty }
+        }
 
         struct Scope: Decodable {
             var model: Model?
@@ -115,7 +139,6 @@ enum ClaudeUsageAPI {
         enum CodingKeys: String, CodingKey {
             case kind, group, percent, scope
             case resetsAt = "resets_at"
-            case isActive = "is_active"
         }
     }
 
@@ -168,8 +191,10 @@ enum ClaudeUsageAPI {
     }
 
     /// Matches the official CLI's User-Agent, using the installed Claude Code version when known.
+    /// The server reads the surface from it: any other shape gets `cedar_ember` back as
+    /// ineligible (`"ineligible_reason": "surface"`), with no grants.
     static var userAgent: String {
-        "claude-code/\(ClaudeCodeVersion.installed ?? "2.1.0")"
+        "claude-cli/\(ClaudeCodeVersion.installed ?? "2.1.0") (external, cli)"
     }
 
     // MARK: Mapping
@@ -190,23 +215,21 @@ enum ClaudeUsageAPI {
         add(usage.fiveHour, id: "session", title: "5-hour", seconds: 5 * 3600, modelSpecific: false)
         add(usage.sevenDay, id: "weekly", title: "Weekly", seconds: 7 * 86400, modelSpecific: false)
 
-        // Prefer the newer scoped `limits` list; fall back to the flat per-model fields.
-        let scoped = (usage.limits ?? []).filter {
-            $0.isActive != false && $0.scope?.model != nil && $0.percent != nil
+        // Prefer the newer scoped `limits` list; fall back to the flat per-model fields. As in
+        // CodexBar, `is_active` isn't a filter: Fable's weekly limit is enforced yet reports false.
+        var scopedIDs: Set<String> = []
+        for entry in usage.limits ?? [] where entry.kind == "weekly_scoped" {
+            guard let name = entry.modelName, let used = entry.percent else { continue }
+            let id = "\(name.lowercased().replacingOccurrences(of: " ", with: "-"))-weekly"
+            guard scopedIDs.insert(id).inserted else { continue }
+            windows.append(LimitWindow(
+                id: id, title: "\(name) Weekly",
+                usedPercent: min(max(used, 0), 100),
+                resetsAt: entry.resetsAt.flatMap(parseISODate),
+                durationSeconds: 7 * 86400,
+                isModelSpecific: true))
         }
-        if !scoped.isEmpty {
-            for entry in scoped {
-                let name = entry.scope?.model?.displayName ?? entry.scope?.model?.id ?? "Model"
-                let weekly = entry.group == "weekly" || (entry.kind ?? "").contains("weekly")
-                windows.append(LimitWindow(
-                    id: "\(name.lowercased().replacingOccurrences(of: " ", with: "-"))-\(weekly ? "weekly" : "limit")",
-                    title: weekly ? "\(name) Weekly" : name,
-                    usedPercent: min(max(entry.percent ?? 0, 0), 100),
-                    resetsAt: entry.resetsAt.flatMap(parseISODate),
-                    durationSeconds: weekly ? 7 * 86400 : nil,
-                    isModelSpecific: true))
-            }
-        } else {
+        if scopedIDs.isEmpty {
             add(usage.sevenDayOpus, id: "opus-weekly", title: "Opus Weekly", seconds: 7 * 86400, modelSpecific: true)
             add(usage.sevenDaySonnet, id: "sonnet-weekly", title: "Sonnet Weekly", seconds: 7 * 86400, modelSpecific: true)
         }

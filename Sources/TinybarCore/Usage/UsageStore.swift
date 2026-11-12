@@ -355,6 +355,32 @@ public actor UsageStore {
         try db.run("SELECT value FROM meta WHERE key = 'opencode_import'").first?.first?.text == "done"
     }
 
+    /// Reads a bounded 9router snapshot; counters and the raw row-id checkpoint commit together.
+    @discardableResult
+    public func ingestNineRouter(database: URL? = nil) throws -> Int {
+        let database = database ?? NineRouterKeys.database
+        guard FileManager.default.fileExists(atPath: database.path) else { return 0 }
+        let seen = try db.run("SELECT value FROM meta WHERE key = 'ninerouter_cursor'")
+            .first?.first?.text.flatMap(Int64.init) ?? 0
+        guard let reading = NineRouterHistory.read(database: database, after: seen) else { return 0 }
+        return try db.transaction {
+            struct Slot: Hashable { var day: String; var provider: ProviderID; var model: String }
+            var totals: [Slot: TokenCounts] = [:]
+            for row in reading.rows {
+                let slot = Slot(day: DayKey.string(for: row.record.timestamp), provider: row.provider, model: row.record.model)
+                totals[slot, default: TokenCounts()] += row.record.tokens
+                if let band = ContextBand.of(row.record.tokens) {
+                    try addLong(day: slot.day, provider: slot.provider, model: slot.model, project: "", band: band, row.record.tokens)
+                }
+            }
+            for (slot, tokens) in totals {
+                try addDaily(day: slot.day, provider: slot.provider, model: slot.model, project: "", tokens)
+            }
+            try db.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('ninerouter_cursor', ?)", [.text(String(reading.newest))])
+            return reading.rows.count
+        }
+    }
+
     /// Reads only bytes appended since the last run of each changed file.
     private func ingest(
         _ source: LogSource, roots: [URL], only: Set<String>?,

@@ -100,7 +100,7 @@ struct SplitNumber: View {
                         Text("\(ModelName.display(model.name)) only")
                     }
                 } else {
-                    ForEach([ProviderID.claude, .codex], id: \.self) { id in
+                    ForEach(ProviderID.allCases.filter(\.hasActivity), id: \.self) { id in
                         if let t = byProvider[id], t > 0 {
                         HStack(spacing: 5) {
                             Circle().fill(palette.color(id)).frame(width: 7, height: 7)

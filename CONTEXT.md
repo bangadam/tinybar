@@ -1,17 +1,17 @@
 # Tinybar
 
-A macOS menu bar app that shows how much of each AI coding subscription is used up, how many tokens were used over time, and what that usage would have cost at API prices.
+A macOS menu bar app that shows how much of each AI coding subscription is used up, prepaid credit balances, how many tokens were used over time, and what that usage would have cost at API prices.
 
 ## Language
 
 ### Subscriptions and limits
 
 **Provider**:
-A company whose AI subscription Tinybar tracks (e.g. Anthropic via Claude, OpenAI via Codex, Google via Gemini, Anysphere via Cursor, OpenCode via its Go subscription).
+A company whose AI subscription or credit balance Tinybar tracks (e.g. Anthropic via Claude, OpenAI via Codex, Google via Gemini, Anysphere via Cursor, OpenCode via its Go subscription, GitHub via Copilot, xAI via Grok, or Surplus, InferHub, DeepSeek and Rins via their API keys).
 _Avoid_: Service, vendor, integration
 
 **Account**:
-One login with a Provider, with its own Limit Windows. A Provider can have several, and the same login found twice is one Account.
+One login with a Provider, with its own Limit Windows or credit balance. A Provider can have several, and the same login found twice is one Account.
 _Avoid_: Profile, slot, seat, subscription (when one login is meant)
 
 **Active Account**:
@@ -23,23 +23,30 @@ All of a Provider's Accounts taken together. A Pool's Limit Window shows the pla
 _Avoid_: Stack, aggregate, total
 
 **Limit Window**:
-A rolling or fixed period in which a Provider caps usage, shown as the percentage left (100% at the start of the window, 0% when the cap is reached) and a Reset time (e.g. the 5-hour session window, the weekly window, a model-specific weekly window).
+A rolling or fixed period in which a Provider caps usage, shown as the percentage left (100% at the start of the window, 0% when the cap is reached) and a Reset time (e.g. the 5-hour session window, the weekly window, a model-specific weekly window). "Show percentages as used" shows the percentage used instead.
 _Avoid_: Quota, rate limit, bucket
+
+**Credit Balance**:
+The spendable amount reported by a Provider, not a Limit Window or percentage. Surplus, InferHub and DeepSeek report one from API keys read from active connections in 9router's `~/.9router/db/data.sqlite`; Rins reports only its key's plan. None of the four has a Reset, pin target or Limit Alert.
 
 **Reset**:
 The moment a Limit Window's usage returns to zero.
 _Avoid_: Renewal, refresh
 
 **Run-out Time**:
-When a Limit Window will reach 0% left if usage continues at its average pace since the window started. It can fall after the Reset; then the limit doesn't bind and the gap shows the headroom.
+When a Limit Window will reach 0% left if usage continues at its average pace since the window started. It can fall after the Reset; then the limit doesn't bind, and the window "lasts until reset" instead of showing the time.
 _Avoid_: ETA, prediction, burn rate
+
+**Reserve**:
+How much less of a Limit Window is used than an even pace would have used by now: the share of the window passed minus the share used. Only a window that lasts until its Reset has one.
+_Avoid_: Headroom, buffer, spare
 
 **Banked Reset**:
 A saved reset the user holds (a Codex reset coupon, a Claude "Reset for free" grant), which can be redeemed to reset a Limit Window early. Tinybar only displays it and never redeems it.
 _Avoid_: Reset credit, rollover
 
 **Pinned Limit**:
-The single Limit Window, of a Pool or of one Account, that the user picked in the popover to show in the menu bar. Without one, the menu bar shows Auto: of the Pools' windows that aren't model-specific, the one that runs out first.
+The single Limit Window, of a Pool or of one Account, that the user picked in the popover to show in the menu bar. Without one, the menu bar shows Auto: of the Pools' windows that aren't model-specific, the one that runs out first, skipping Pools with a window used up while another can still be used.
 _Avoid_: Primary limit, featured limit
 
 **Incident**:
@@ -57,7 +64,7 @@ _Avoid_: Offline, error state
 ### Token history
 
 **Usage Record**:
-A single model response from a local coding CLI log or database, with its token counts (input, output, cache write, cache read), model, timestamp and Project.
+A single model response from a local coding CLI log or database, including 9router's Surplus/InferHub/DeepSeek/Rins request history, with its token counts (input, output, cache write, cache read), model, timestamp and Project where available. Requests imported from 9router have no Project or Activity counters.
 _Avoid_: Event, entry, log line
 
 **Project**:
@@ -83,6 +90,10 @@ _Avoid_: Worth, ROI, savings
 **Benchmark Task**:
 One job from the Artificial Analysis Intelligence Index, which that benchmark prices and times per model. It describes the benchmark, not the user's work.
 _Avoid_: Task (alone), job
+
+**Best Value**:
+The model a plan's headline counts Benchmark Tasks on: the most tasks among its models near the top benchmark score of any Provider. It says what the plan can buy, so it can be a model the user doesn't run.
+_Avoid_: Main model, recommended model
 
 ### Activity
 

@@ -636,7 +636,7 @@ struct TokensHero: View {
                 }
             }
             HStack(spacing: 14) {
-                ForEach([ProviderID.claude, .codex], id: \.self) { id in
+                ForEach(ProviderID.allCases.filter(\.hasActivity), id: \.self) { id in
                     if let t = summary.tokensByProvider[id], t > 0 {
                         HStack(spacing: 5) {
                             Circle().fill(palette.color(id)).frame(width: 7, height: 7)
@@ -701,7 +701,7 @@ private struct Bars: View {
                 HStack(alignment: .bottom, spacing: 0) {
                     ForEach(bars) { bar in
                         VStack(spacing: 0) {
-                            ForEach([ProviderID.codex, .claude], id: \.self) { id in
+                            ForEach(ProviderID.allCases.filter(\.hasActivity).reversed(), id: \.self) { id in
                                 let t = bar.tokens[id] ?? 0
                                 if t > 0 {
                                     Rectangle().fill(palette.color(id)).frame(height: g.size.height * CGFloat(t) / peak)
@@ -1035,7 +1035,7 @@ private struct AllModels: View {
         let palette = StatsPalette(scheme)
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                ForEach([ProviderID.claude, .codex], id: \.self) { id in
+                ForEach(ProviderID.allCases.filter(\.hasActivity), id: \.self) { id in
                     let mine = models.filter { $0.provider == id }
                     if !mine.isEmpty {
                         VStack(alignment: .leading, spacing: 2) {
@@ -1263,7 +1263,7 @@ enum StatsText {
     static let speedNote = "Output tokens per second, averaged over responses of 200 tokens or more, each timed from sending the request to its last token. Shown once a model has 10 of them."
 
     static func byProvider(_ counts: [ProviderID: Int64]) -> [StatsTip.Row] {
-        [ProviderID.claude, .codex].compactMap { id in
+        ProviderID.allCases.filter(\.hasActivity).compactMap { id in
             guard let v = counts[id], v > 0 else { return nil }
             return .init(label: id.displayName, value: v.formatted(.number), provider: id)
         }

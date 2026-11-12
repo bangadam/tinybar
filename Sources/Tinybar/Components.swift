@@ -27,10 +27,23 @@ enum Motion {
     static let reduced = Animation.easeOut(duration: 0.15)
 }
 
+// MARK: Used or left
+
+extension EnvironmentValues {
+    /// Settings' "Show percentages as used": figures and fills count up as a window is used.
+    @Entry var showsUsed = false
+}
+
+/// What a figure or fill shows for a share left (0...100): that share, or what's used of it.
+func shownPercent(left: Double, used: Bool) -> Double {
+    used ? 100 - min(max(left, 0), 100) : left
+}
+
 // MARK: Rings
 
 /// Concentric rings, one per Limit Window, longest outside. Each ring is full when the window is
-/// untouched and empties as it is used, like the ring in the menu bar.
+/// untouched and empties as it is used, like the ring in the menu bar. With "Show percentages as
+/// used" it fills as the window is used instead.
 struct LimitRings: View {
     let windows: [LimitWindow]
     /// nil draws neutral grey rings (empty state).
@@ -38,6 +51,7 @@ struct LimitRings: View {
     var lineWidth: CGFloat = 4.5
     var gap: CGFloat = 2
     var dimmed = false
+    @Environment(\.showsUsed) private var showsUsed
 
     var body: some View {
         let track = (provider?.color ?? .secondary).opacity(0.16)
@@ -46,7 +60,9 @@ struct LimitRings: View {
                 Circle().stroke(track, lineWidth: lineWidth).padding(lineWidth / 2)
             }
             ForEach(Array(windows.enumerated()), id: \.element.id) { i, window in
-                Ring(fraction: window.remainingPercent / 100, provider: provider, track: track, lineWidth: lineWidth)
+                Ring(
+                    fraction: shownPercent(left: window.remainingPercent, used: showsUsed) / 100,
+                    provider: provider, track: track, lineWidth: lineWidth)
                     .padding(CGFloat(i) * (lineWidth + gap) + lineWidth / 2)
             }
         }
@@ -54,7 +70,8 @@ struct LimitRings: View {
         .saturation(dimmed ? 0 : 1)
         .opacity(dimmed ? 0.55 : 1)
         .accessibilityElement()
-        .accessibilityLabel(windows.map { "\($0.title) \(Int($0.remainingPercent.rounded()))% left" }.joined(separator: ", "))
+        .accessibilityLabel(windows.map { "\($0.title) \(PercentText.phrase(left: $0.remainingPercent, used: showsUsed))" }
+            .joined(separator: ", "))
     }
 
     private struct Ring: View {
@@ -100,13 +117,15 @@ extension ProviderSnapshot {
 // MARK: Numbers
 
 /// A percentage set the way the rings are read: rounded numerals, a smaller percent sign.
+/// `percent` is the share left; it shows as used with "Show percentages as used".
 struct PercentText: View {
     let percent: Double
     var size: CGFloat = 22
+    @Environment(\.showsUsed) private var showsUsed
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 1) {
-            Text("\(Int(percent.rounded()))")
+            Text("\(Int(shownPercent(left: percent, used: showsUsed).rounded()))")
                 .font(.system(size: size, weight: .semibold, design: .rounded))
                 .tracking(size > 18 ? -0.4 : 0)
             Text("%")
@@ -116,10 +135,16 @@ struct PercentText: View {
         .monospacedDigit()
         .foregroundStyle(Self.color(percent))
         .accessibilityElement()
-        .accessibilityLabel("\(Int(percent.rounded()))% left")
+        .accessibilityLabel(Self.phrase(left: percent, used: showsUsed))
     }
 
-    /// Only a limit that is nearly gone gets a colour; everything else stays neutral.
+    /// "77% left", or "23% used".
+    static func phrase(left: Double, used: Bool) -> String {
+        "\(Int(shownPercent(left: left, used: used).rounded()))% \(used ? "used" : "left")"
+    }
+
+    /// Only a limit that is nearly gone gets a colour; everything else stays neutral. Goes by the
+    /// share left whichever way it's shown.
     static func color(_ percent: Double) -> Color {
         switch percent {
         case ..<5: .red
@@ -131,12 +156,14 @@ struct PercentText: View {
 
 /// Fills with what is left: full at the start of a window, empty when the limit is reached.
 struct RemainingBar: View {
+    /// The share left, 0...1. Filled to what's used instead with "Show percentages as used".
     let fraction: Double
     let provider: ProviderID
+    @Environment(\.showsUsed) private var showsUsed
 
     var body: some View {
         GeometryReader { geo in
-            let f = min(max(fraction, 0), 1)
+            let f = shownPercent(left: min(max(fraction, 0), 1) * 100, used: showsUsed) / 100
             ZStack(alignment: .leading) {
                 Capsule().fill(provider.color.opacity(0.14))
                 Capsule()
@@ -321,6 +348,12 @@ extension ProviderID {
         case .gemini: "antigravity.google"
         case .cursor: "cursor.com"
         case .opencode: "opencode.ai"
+        case .copilot: "github.com"
+        case .grok: "grok.com"
+        case .surplus: "surplusintelligence.ai"
+        case .inferhub: "inferhub.dev"
+        case .deepseek: "deepseek.com"
+        case .rins: "rinsdev.cloud"
         }
     }
 
@@ -334,6 +367,14 @@ extension ProviderID {
         case .cursor: .gray
         // Its mark is monochrome like Codex's and Cursor's, which charts couldn't tell apart.
         case .opencode: Color(red: 0.13, green: 0.65, blue: 0.62)
+        // GitHub's Copilot purple, as its mark is monochrome too.
+        case .copilot: Color(red: 0.51, green: 0.31, blue: 0.87)
+        // Its mark is monochrome too, and this blue is taken by nothing that shows on a chart.
+        case .grok: Color(red: 0.20, green: 0.55, blue: 0.95)
+        case .surplus: Color(red: 0.35, green: 0.55, blue: 1.0)
+        case .inferhub: Color(red: 0.65, green: 0.4, blue: 1.0)
+        case .deepseek: Color(red: 0.3, green: 0.65, blue: 0.9)
+        case .rins: Color(red: 0.45, green: 0.42, blue: 0.95)
         }
     }
 

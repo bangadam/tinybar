@@ -19,6 +19,12 @@ final class Settings {
         didSet { defaults.set(hidePercentage, forKey: "hidePercentage") }
     }
 
+    /// Shows how much of each Limit Window is used instead of how much is left, in the menu bar
+    /// and the popover. Alerts and Auto still go by what's left.
+    var showsUsedPercentage: Bool {
+        didSet { defaults.set(showsUsedPercentage, forKey: "showsUsedPercentage") }
+    }
+
     var notificationsEnabled: Bool {
         didSet { defaults.set(notificationsEnabled, forKey: "notificationsEnabled") }
     }
@@ -52,6 +58,7 @@ final class Settings {
         defaults.register(defaults: ["notificationsEnabled": true, "hidePercentage": false])
         pinnedLimit = defaults.string(forKey: "pinnedLimit")
         hidePercentage = defaults.bool(forKey: "hidePercentage")
+        showsUsedPercentage = defaults.bool(forKey: "showsUsedPercentage")
         notificationsEnabled = defaults.bool(forKey: "notificationsEnabled")
         readClaudeSwap = defaults.bool(forKey: "readClaudeSwap")
         claudeSwapHintDismissed = defaults.bool(forKey: "claudeSwapHintDismissed")
@@ -80,11 +87,18 @@ final class Settings {
 
     /// Auto-detected Providers are on unless the user turned them off.
     func isEnabled(_ id: ProviderID, detected: @autoclosure () -> Bool) -> Bool {
-        (defaults.object(forKey: "enabled.\(id.rawValue)") as? Bool) ?? detected()
+        (defaults.object(forKey: Self.enabledKey(id)) as? Bool) ?? detected()
     }
 
+    /// Whether the user turned a Provider on themselves. For fetches, off the main actor.
+    nonisolated static func isTurnedOn(_ id: ProviderID) -> Bool {
+        UserDefaults.standard.bool(forKey: enabledKey(id))
+    }
+
+    private nonisolated static func enabledKey(_ id: ProviderID) -> String { "enabled.\(id.rawValue)" }
+
     func setEnabled(_ id: ProviderID, _ enabled: Bool) {
-        defaults.set(enabled, forKey: "enabled.\(id.rawValue)")
+        defaults.set(enabled, forKey: Self.enabledKey(id))
     }
 
     // MARK: Accounts
@@ -95,6 +109,24 @@ final class Settings {
 
     func setLoginFolder(_ folder: LoginFolder, enabled: Bool) {
         if enabled { loginFoldersOff.remove(folder.id) } else { loginFoldersOff.insert(folder.id) }
+    }
+
+    /// Login folders added anywhere on the Mac. Read afresh, as the user's agent may add one with
+    /// `defaults write` while Tinybar runs (SPEC §15).
+    var addedLoginFolders: [URL] { AddedLoginFolders.urls(defaults) }
+
+    func addLoginFolder(_ url: URL) {
+        let url = url.standardizedFileURL
+        guard !addedLoginFolders.contains(where: { $0.path == url.path }) else { return }
+        defaults.set((defaults.stringArray(forKey: AddedLoginFolders.key) ?? []) + [url.path], forKey: AddedLoginFolders.key)
+    }
+
+    func removeLoginFolder(_ url: URL) {
+        let path = url.standardizedFileURL.path
+        let kept = (defaults.stringArray(forKey: AddedLoginFolders.key) ?? []).filter {
+            AddedLoginFolders.urls(from: [$0]).first?.path != path
+        }
+        defaults.set(kept, forKey: AddedLoginFolders.key)
     }
 
     // MARK: Browser fallback

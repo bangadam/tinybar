@@ -14,7 +14,7 @@ write code. Docs-only fixes are the exception.
   this needs a new ADR, see [ADR 0001](docs/adr/0001-read-only-credentials.md).
 - **Idle is free.** 0% CPU while the popover is closed. No timer faster than the 5-minute poll, no
   animation loops, no polling of the file system (FSEvents only).
-- **Memory.** Under 50 MB resident at steady state; today it's ~20 MB footprint. Heavy one-off work
+- **Memory.** Under 50 MB resident at steady state; today it's ~40 MB footprint. Heavy one-off work
   (like the first history import) runs in a child process.
 - **Incremental only.** Log ingestion reads appended bytes. Nothing rescans the history on a timer.
 - **No WebViews, no embedded JS engines, no long-lived child processes.** A new dependency has to
@@ -36,16 +36,22 @@ write code. Docs-only fixes are the exception.
 Developer tools:
 
 ```sh
-swift run tinybar-cli limits [--browser] [--swap] [--provider=<id>]   # limits and run-out times, with any other accounts
+swift run tinybar-cli limits [--browser] [--swap] [--opted-in] [--provider=<id>]   # limits and run-out times, with any other accounts
 swift run tinybar-cli cookies              # which browser holds session cookies
 swift run tinybar-cli ingest [db]          # ingest Claude + Codex logs and OpenCode's database
 swift run tinybar-cli usage [db]           # print usage summaries
 swift run tinybar-cli stats [db]           # raw Activity counters, to check against the logs
 python3 -I Scripts/verify-opencode.py [--out DIR]   # OpenCode Go against the real CLIs and a mock (no subscription needed)
+python3 -I Scripts/verify-copilot.py       # Copilot against the real CLI, gh and a mock (no plan needed)
+python3 -I Scripts/verify-grok.py          # Grok against the real CLI and a mock (no plan needed)
 swift Scripts/make-icon.swift              # redraw Resources/AppIcon.icns and docs/icon.png
-.build/debug/Tinybar --snapshot out.png [--page <provider>|settings] [--accounts one|stack|many] [--backdrop] [--redact-projects]
+.build/debug/Tinybar --snapshot out.png [--page <provider>|settings|settings/<provider>] [--accounts one|stack|many] [--backdrop] [--redact-projects]
 .build/debug/Tinybar --snapshot out.png --stats [--page commands|models|languages|plans] [--range week|month|all] [--model <id>] [--hover x,y]   # a Stats card
 ```
+
+`limits --provider=surplus`, `--provider=inferhub`, `--provider=deepseek` and `--provider=rins` show credit balances
+instead of Limit Windows. Keys come from active connections in 9router's
+`~/.9router/db/data.sqlite`, opened read-only; never copy real keys into fixtures or a new config file.
 
 `--snapshot` renders the popover to PNG in light and dark. `--accounts` stands in for several logins
 with made-up names and limits, `--backdrop` puts a worst-case window behind it, and
@@ -86,10 +92,14 @@ Open an issue first and say which plan you're on. For the PR:
 - Implement `UsageProvider` in `Sources/TinybarCore/<Provider>/`, mapping to `LimitWindow`s with
   `id`s that stay stable across fetches (pinning and alerts depend on them). Windows of one kind
   need the same `id` on every Account, as the Pool averages by it.
+  Credit-only Providers (Surplus, InferHub and DeepSeek) return `windows: []` with `credits`; Rins
+  returns `windows: []` and the key's model as `plan`, as it has no balance endpoint. Keep zero
+  balances visible and do not invent percentages, Reset times or pin targets.
 - Map every error to `ProviderError`, so an expired login shows as stale with a hint.
 - Test the mapping with a response fixture. Never commit real tokens, emails or account IDs.
 - No subscription to test with? Run the real client against a local mock, as
-  `Scripts/verify-opencode.py` does, and let it judge the mock. ADR 0009 says what that can't show.
+  `Scripts/verify-opencode.py`, `Scripts/verify-copilot.py` and `Scripts/verify-grok.py` do, and let it
+  judge the mock. ADRs 0009, 0011 and 0012 say what that can't show.
 
 ## Bugs
 

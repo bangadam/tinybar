@@ -1,6 +1,6 @@
 # Tinybar — v1 Specification
 
-A lightweight, native macOS menu bar app showing AI subscription limits, local token usage over time, and the Theoretical Cost of that usage. It is a from-scratch alternative to [CodexBar](https://github.com/steipete/CodexBar) (about 309k LOC, 87 providers), built around performance and a small scope.
+A macOS menu bar app showing AI subscription limits, local token usage over time, and the Theoretical Cost of that usage. It is a lighter, from-scratch alternative to [CodexBar](https://github.com/steipete/CodexBar) (about 309k LOC, 87 providers), with no WebKit, read-only logins and a small scope.
 
 Vocabulary: see [CONTEXT.md](./CONTEXT.md). Decisions: [docs/adr/](./docs/adr), above all [ADR 0001](./docs/adr/0001-read-only-credentials.md) (read-only credentials).
 
@@ -9,12 +9,13 @@ Vocabulary: see [CONTEXT.md](./CONTEXT.md). Decisions: [docs/adr/](./docs/adr), 
 **Goals**
 - A one-command install that runs with zero configuration.
 - Near-zero resource use (see §2).
-- Accurate Limit Windows, Resets and Banked Resets for Claude, Codex, Gemini, Cursor and OpenCode Go.
-- Daily token history and Theoretical Cost from local CLI logs.
+- Accurate Limit Windows and Resets for Claude, Codex, Gemini, Cursor, OpenCode Go, Copilot and Grok, and Banked Resets for Claude and Codex.
+- Read-only credit balances for Surplus, InferHub and DeepSeek, and the key's model for Rins, using keys stored in 9router.
+- Daily token history and Theoretical Cost from local CLI logs, and 9router's request history for Surplus, InferHub, DeepSeek and Rins.
 - Publishable: MIT license, notarized, auto-updating.
 
 **Non-goals (v1)**
-- Providers other than Claude, Codex, Gemini, Cursor and OpenCode Go. Grok and Kimi come later, one at a time.
+- Providers other than Claude, Codex, Gemini, Cursor, OpenCode Go, Copilot, Grok, Surplus, InferHub, DeepSeek and Rins. Kimi comes later.
 - Token history for Gemini and Cursor (neither keeps usable local logs; limits only).
 - Refreshing tokens or writing to CLI credential files (ADR 0001).
 - Token usage from web/desktop chat apps (no local logs).
@@ -87,6 +88,30 @@ Only the subscription: Zen's balance and Console budgets have no Limit Window (A
 Displayed: the 5-hour, weekly and monthly windows. A `rate-limited` window shows nothing left, whatever its share. No plan name (the report has none), and no model-specific windows: Go's limits are per model but it reports one share per window.
 Enabled automatically only with an `opencode-go` credential, as a Console login may have no Go plan. No Limit Alerts for the monthly window.
 
+### Copilot
+1. **The Copilot CLI's current user**: `lastLoggedInUser` (`last_logged_in_user` before 1.x) from `config.json` in `$COPILOT_HOME` or `~/.copilot`. Its token comes from `copilotTokens`/`copilot_tokens` in that file, else `gh auth token --hostname <host> --user <login>` (with `--no-refresh` on a `gh` that has it, as newer ones renew tokens otherwise), else, only if the user turned Copilot on themselves, the `copilot-cli` Keychain item (account `host:login`), which makes macOS ask (ADR 0011).
+2. **An editor plugin's login**: `oauth_token` from `apps.json`, then `hosts.json`, in `$XDG_CONFIG_HOME/github-copilot` or `~/.config/github-copilot`.
+3. **`gh`'s active user**, on github.com or else the first `*.ghe.com` host it holds, only if the user turned Copilot on themselves.
+   → `GET https://api.github.com/copilot_internal/user` (`api.<name>.ghe.com` for GitHub Enterprise Cloud) with `Authorization: Bearer`. A login is sent only to GitHub, `*.ghe.com` or this Mac.
+
+Displayed: plan, and a monthly window for each finite quota: Premium (AI Credits under token billing), Chat and Completions, reset at `quota_reset_at`, else `quota_reset_date_utc`, `quota_reset_date` or `limited_user_reset_date`. Older Free accounts report `limited_user_quotas` out of `monthly_quotas`. On an unlimited plan, `credits_used` as "AI credits used". An ended subscription or an account with no plan says so.
+Enabled automatically with a CLI user whose token is in its file or held by `gh`, or an editor plugin's login. No Limit Alerts for the monthly windows. No token history (ADR 0011).
+
+### Grok
+1. **The Grok CLI's login**: `auth.json` in `$GROK_HOME` or `~/.grok`, the entry `https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828`, else `https://accounts.x.ai/sign-in`, whichever comes first with a `key`, as the token. No other entry is ever used. An API key and the old web logins (`auth_mode` `api_key`, `web_login`, `grok`) aren't logins here, as the CLI itself ignores the latter and the former bills elsewhere. A custom deployment is left to the CLI: `[auth]`, `[grok_com_config]` or `[endpoints]` in `config.toml`, `managed_config.toml` or `requirements.toml` there or in `/etc/grok`, or a variable that selects another account or server. A login past its `expires_at` is expired with no request sent, and only the CLI renews it (ADR 0012).
+   → `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits`, and `/v1/settings` for the plan's name, as the CLI does, with `Authorization: Bearer` and `X-XAI-Token-Auth: xai-grok-cli`. A login is sent only to that host or this Mac.
+
+Displayed: plan (`subscription_tier_display`), and one window, as Chat, Build and the rest are shares of one pool: `creditUsagePercent` over `currentPeriod`, else over `billingPeriodStart` and `billingPeriodEnd`. Weekly or Monthly from the period's type, else its length, and Credits for any other period. A left-out percentage is 0 within a whole `currentPeriod` typed weekly or monthly, since proto3 omits zeros. `onDemandUsed` out of `onDemandCap` (US cents) as "Extra usage" when either isn't zero. A team account that's turned away, a report with no percentage to read, and a period that has already ended say so.
+Enabled automatically with a usable login. Limit Alerts for the weekly window only. No token history (ADR 0012).
+### Surplus, InferHub, DeepSeek and Rins
+Read active connections from 9router's `~/.9router/db/data.sqlite` (`providerConnections`) without writing credentials or database files. Surplus, InferHub and Rins use the `surplus`, `inferhub` and `rins` node names; DeepSeek uses its `deepseek` provider connection.
+- Surplus: `GET https://api.surplusintelligence.ai/v1/payments/balance`, with the stored API key as a Bearer token. Convert the spendable microdollar balance to dollars.
+- InferHub: `GET https://inferhub.dev/api/me`, with the stored API key as a Bearer token.
+- DeepSeek: `GET https://api.deepseek.com/user/balance`, with the stored API key as a Bearer token.
+- Rins: `GET https://api.rinsdev.cloud/v1/models`, with the stored API key as a Bearer token. Rins publishes no balance endpoint; a key is bound to one plan and one model, so the list names the model the key may call.
+
+Displayed: credit balances, including zero, and for Rins the model of its key's plan. These Providers have no Limit Windows, Limit Alerts, menu-bar percentage, pin target, browser fallback or status feed. Token history comes from 9router's `usageHistory` for requests routed through it. Enable automatically when an active connection has a key; add or replace the key in 9router if it is missing or expired.
+
 ### Detection and staleness
 - On launch, a Provider is enabled automatically if its CLI credentials exist. It can be toggled in Settings.
 - If a fetch fails (expired token, network, 401), the Account becomes **Stale**. It keeps its last values and says how to fix it: run `claude` once (or `codex`, `agy`, "open Cursor or sign in at cursor.com", or `opencode auth login`).
@@ -105,8 +130,8 @@ Implementation note: endpoint shapes are undocumented. Verify request headers an
 
 ## 6. Menu bar
 
-- A tiny ring glyph showing how much of the Pinned Limit is **left**, in that Provider's colour (Claude orange, Gemini its spark, Codex and Cursor monochrome): full at 100%, empty at 0%, with the percentage next to it (`◕ 77%`). Settings has "hide percentage".
-- **Pinned Limit**: chosen by clicking any Limit Window on a Provider page, of the Provider's only Account or of one of several; clicking it again unpins it. Unpinned, the menu bar shows **Auto**: of every Pool's windows that aren't model-specific, the one whose Run-out Time comes first before its Reset, else the one with the least left (ties: the earlier Reset). A Pool of several Accounts has no Run-out Time (§15). A Pool counts as Stale when all its Accounts are, and Stale Pools count only when no other is known. A pinned window that disappears falls back to Auto. Settings has "Show the limit closest to running out".
+- A tiny ring glyph showing how much of the Pinned Limit is **left**, in that Provider's colour (Claude orange, Gemini its spark, Codex and Cursor monochrome): full at 100%, empty at 0%, with the percentage next to it (`◕ 77%`). Settings has "hide percentage", and "Show percentages as used", which counts the ring and every percentage and fill in the popover up from 0% as a window is used. Alerts and Auto still go by what's left. A coloured arc has a hairline edge in a slightly deeper shade of its colour (darker on a dark menu bar, lighter on a light one), so it stays visible on a menu bar tinted close to that colour.
+- **Pinned Limit**: chosen by clicking any Limit Window on a Provider page, of the Provider's only Account or of one of several; clicking it again unpins it. Unpinned, the menu bar shows **Auto**: of every Pool's windows that aren't model-specific, the one whose Run-out Time comes first before its Reset, else the one with the least left (ties: the earlier Reset). A Pool of several Accounts has no Run-out Time (§15). A Pool counts as Stale when all its Accounts are, and Stale Pools count only when no other is known. A Pool with a window at 0% left can't be used until that window resets, so it counts only when every other Pool is used up too; then the menu bar shows the Pool usable again first, by the last of its used-up windows to reset. A pinned window that disappears falls back to Auto. Settings has "Show the limit closest to running out".
 - If the Pinned Limit's Account is Stale, or every Account of its Pool, the glyph is dimmed.
 - **Incidents**: while any enabled Provider has an Incident that disrupts it (not maintenance), the ring wears a status light at its top right, cut out of the ring: orange when degraded, red for an outage. The tooltip names it. No animation.
 
@@ -116,14 +141,16 @@ Read on every poll and popover refresh (same throttle), without credentials, onl
 - **Codex**: `status.openai.com/proxy/status.openai.com` (incident.io), counting the components of the "Codex" group; when any is affected, `status.openai.com/api/v2/summary.json` supplies the incident's title (the open incident naming Codex, else the first open one with an impact).
 - **Cursor**: `status.cursor.com/api/v2/summary.json`, all components.
 - **OpenCode Go**: `status.opencode.ai/api/status`, its `go` service only: Zen's free models are often degraded, which says nothing about the subscription. A page reporting its own data as stale is no answer.
+- **Copilot**: `www.githubstatus.com/api/v2/summary.json`, the components `Copilot` and `Copilot AI Model Providers`.
+- **Grok**: `status.x.ai/api/status`, `grok.com` in the `grok` product only: Imagine, Voice and the mobile apps say nothing about coding, and the page lists nothing for the CLI. A status word it doesn't recognise is no answer.
 - **Gemini**: none. Antigravity has no status page, and Google's Workspace feed (about 350 KB) covers the Gemini app instead.
 An unresolved incident counts when it names a counted component, or names none and has an impact. Its severity is the worst status among counted components (degraded, partial outage, major outage), else its impact. Maintenance in progress counts as maintenance. A page that can't be read keeps its last answer.
 
 ## 7. Popover (344 × 540 pt, fixed; long pages scroll inside)
 
 Two levels, one click apart. A tab bar at the top always shows Overview plus one tab per enabled
-Provider (keys 0–5). With all five on, a Provider page shows only its own name and the other tabs a dot, with the name on hover. The popover keeps one fixed size; pages sit side by side and slide into
-view, so switching never rebuilds or resizes anything. Long pages scroll inside.
+Provider (keys 0–7). With five or more on, a Provider page shows only its own name and the other tabs a dot, with the name on hover. The popover keeps one fixed size; pages sit side by side and slide into
+view, so switching never resizes anything. Only the page in view is built, and the popover's views are released when it closes. Long pages scroll inside.
 
 1. **Overview**:
    - One row per Provider: concentric rings (outer: longest account-wide window, inner: the next),
@@ -140,14 +167,15 @@ view, so switching never rebuilds or resizes anything. Long pages scroll inside.
    - Usage for all Providers (Today, 7d, 30d): total tokens, Theoretical Cost, a daily chart stacked
      by Provider, and top models and Projects, each bar split by Provider.
    - Colours come from each logo: Claude orange, Codex monochrome (black or white), Gemini its
-     four-colour spark, Cursor grey, and OpenCode teal, as its mark is monochrome too.
+     four-colour spark, Cursor grey, and OpenCode teal, Copilot purple and Grok blue, as their marks are monochrome too.
 2. **Provider page**:
    - Large rings with the tightest % left, name and plan.
    - A banner per Incident: status light, title, severity and affected components, when it was
      last updated and on which status page. Clicking it opens the incident.
    - A banner when Stale: what went wrong and what the user runs to fix it.
-   - Every Limit Window: bar, % left, reset time and countdown, and its Run-out Time: in orange if
-     it comes before the Reset, faint if after (the headroom). Click to pin; the pinned one is marked.
+   - Every Limit Window: bar, % left, reset time and countdown, and its Run-out Time in orange if
+     it comes before the Reset, else a faint "Lasts until reset" with its Reserve in the tooltip.
+     Click to pin; the pinned one is marked.
    - Extras: credits, Banked Resets, extra usage or on-demand spend.
    - With several Accounts: the rings and % show the Pool, with "3 accounts" for the plan. In place
      of the Limit Windows, a list with a compact row per Account (small rings, name, plan, "in use" on
@@ -164,12 +192,17 @@ view, so switching never rebuilds or resizes anything. Long pages scroll inside.
    prices and Stats come from, what stays on the Mac, and how much of the last 30 days' tokens
    Activity was counted from when that is short of all.
 
-**Settings** (replaces the page, back with Esc): Provider toggles, a toggle per extra login folder and "Read accounts from claude-swap" (§15), launch at login, notifications, the browser cookie fallback per Provider (off by default; enabling it may trigger a macOS Keychain prompt for the browser's storage key), hide percentage, and Auto for the menu bar. The running version sits at the bottom, next to a Report a bug link that opens the GitHub bug form with the version and macOS filled in.
+**Settings** (replaces the page, back with Esc): two levels, so the first fits at a glance.
+- **First level**: Subscriptions, a row per Provider with its state ("Off", its email, "3 accounts") opening its page; Other logins: Add folder… and Copy prompt for your agent, with any added folder that holds no login (§15); General: launch at login, notifications, hide percentage, show percentages as used, and Auto for the menu bar. The running version sits at the bottom, next to a Report a bug link that opens the GitHub bug form with the version and macOS filled in.
+- **A subscription's page** slides in from the right, and Back or Esc returns to the first level: Show <Provider>, its Accounts with where each is read from (the default login, a folder found in the home folder with its toggle, an added folder with a remove button, other Copilot users, "Read accounts from claude-swap"), and for Claude and Codex the browser cookie fallback (off by default; enabling it may trigger a macOS Keychain prompt for the browser's storage key).
+- A Provider is on by default only when its login is found; one turned on or off by hand stays that way.
 
 ### Run-out Time
 - Pace = % used ÷ time since the window started (Reset minus duration). Run-out Time = now + % left ÷ pace.
-- Always shown on the Provider page; only a Run-out Time before the Reset warns (orange, and on the
-  Overview).
+- Only a Run-out Time before the Reset is shown as a time, and it warns (orange, and on the Overview).
+  One after the Reset reads "Lasts until reset": a date past the Reset looks like a wrong Reset.
+- Reserve = share of the window passed − % used, the same figure CodexBar shows. Next to the row's
+  % left it reads as a second, conflicting number, so it stays in the tooltip, and in the CLI.
 - The window's own average needs no stored history and already includes the idle hours and nights
   that recur before the Reset.
 - No forecast before 5% of the window has passed (1% steps make early readings noise), for an
@@ -189,9 +222,10 @@ view, so switching never rebuilds or resizes anything. Long pages scroll inside.
 ### Sources
 - **Claude**: `~/.claude/projects/**/*.jsonl`. Assistant messages with `usage` (input, output, cache creation, cache read), `model`, `timestamp`, `cwd`. De-duplicate by message id; the same response can appear several times, and the most complete copy wins.
 - **Codex**: `~/.codex/sessions/**` (and archived sessions). Token counts are cumulative per session, so store deltas and handle forked sessions without double counting.
-- **Every Account together**: the same logs of each extra login folder and of `cswap run` profiles (`~/.claude-swap-backup/sessions/*/projects`), where those folders exist, looked for on each ingest. These are read whether or not the Account is toggled on or claude-swap is turned on, because they are only local logs. Folders that resolve to the same place count once. Token history stays per Provider: after `cswap switch`, nothing in a log says which Account made a request.
+- **Every Account together**: the same logs of each extra login folder, added ones included, and of `cswap run` profiles (`~/.claude-swap-backup/sessions/*/projects`), where those folders exist, looked for on each ingest. These are read whether or not the Account is toggled on or claude-swap is turned on, because they are only local logs. Folders that resolve to the same place count once. Token history stays per Provider: after `cswap switch`, nothing in a log says which Account made a request.
 
 - **OpenCode**: `opencode.db`, as a copy of the database and its WAL (a clone on APFS). Finished `message` rows (1.x) and `session_message` rows (2.x, assistant and compaction) whose provider is `opencode-go`; everything else is left out (ADR 0009). `output` plus `reasoning` counts as output. Forks and the upgrade to 2.x copy rows under new ids, so a response is identified by its time, model and tokens. Each read starts 10 minutes before the newest row seen, never counted past now, and is skipped while the database and WAL are unchanged. No Activity.
+- **Surplus, InferHub, DeepSeek and Rins**: request history from `~/.9router/db/data.sqlite` (`usageHistory`, joined to provider connections). Read from a WAL-safe snapshot, without writing to 9router's database or calling provider APIs. Imported after local logs, at most once per five minutes. Requests retain their model names and have no Project or Activity counters. Names such as `cb/glm-5.3` can be unpriced; no model-name or price mapping is invented.
 
 Parsing rules must be verified against CodexBar's `Sources/CodexBarCore/Vendored/CostUsage/` before implementing.
 
@@ -199,6 +233,7 @@ Parsing rules must be verified against CodexBar's `Sources/CodexBarCore/Vendored
 - **First launch**: import all available logs once, in the background at low priority (`.utility`), with progress shown in the popover.
 - **A log folder that appears** (§15) can hold a whole history, so it gets the same background import in a child process. Normal ingestion waits until that finishes, and until the next launch if it fails. The folders present when a store first reads this are the defaults, which it has already read.
 - **Afterwards**: incremental. Store per file (path, inode, size, mtime, byte offset). Only read appended bytes. Re-read a file from zero if it was truncated or replaced.
+- **9router history**: one persisted cursor imports all matching Providers together. Missing or unreadable history keeps prior daily totals and does not change balance snapshots. Poll throttling belongs to the app; the store stays throttle-free so explicit CLI imports can run immediately.
 - Stored daily totals survive the CLIs deleting old logs (Claude Code deletes after 30 days by default).
 
 ### Store (SQLite, `~/Library/Application Support/Tinybar/usage.sqlite`; ADR 0003)
@@ -238,7 +273,7 @@ Parsing rules must be verified against CodexBar's `Sources/CodexBarCore/Vendored
 - Pushing a `v*` tag publishes a GitHub Release with a zipped app and bumps the cask in the
   `ThiloReintjes/homebrew-tinybar` tap. `Scripts/install.sh` installs it and opens it.
 - Releases are signed with Developer ID and notarized, so Gatekeeper opens them without asking.
-  The release workflow stops if signing or notarization fails. Next: the official cask
+  The release workflow stops if signing or notarization fails, after retrying Apple's ticket server, which sometimes drops the connection. CI and release runs that GitHub gave no runner are re-run, up to four tries, and any re-run uses `macos-15-intel`, which has the same Xcode as `macos-15`. Next: the official cask
   (`brew install --cask tinybar`).
 - **Updates** (ADR 0007): once a day, `GET api.github.com/repos/ThiloReintjes/tinybar/releases/latest`;
   an hour after a check that got no answer, and right away when Tinybar's own version changes.
@@ -251,13 +286,14 @@ Parsing rules must be verified against CodexBar's `Sources/CodexBarCore/Vendored
 
 ## 12. Later (explicitly deferred)
 
-Grok and Kimi providers; token history for other CLIs; OpenCode usage routed to other subscriptions; Activity for OpenCode; a second Account for Cursor, Gemini and OpenCode Go; token refresh (would need a new ADR); historical pricing; Activity for Gemini and Cursor (no local logs).
+Kimi provider; token history for other CLIs; OpenCode usage routed to other subscriptions; Activity for OpenCode; a second Account for Cursor, Gemini, OpenCode Go, Copilot and Grok; token history for Copilot and Grok; Copilot budgets from github.com; Grok's shares per product, prepaid balance and reset coupons; token refresh (would need a new ADR); historical pricing; Activity for Gemini and Cursor (no local logs).
 
 ## 13. Stats window
 
 A separate window for numbers that are fun rather than actionable, built to be shared as a
-screenshot. Claude Code and Codex only. Opened from the popover footer (⌘S); built when opened and
-released when closed, so it costs nothing otherwise. Activity is counted at ingest (ADR 0006).
+screenshot. Tokens cover Claude Code, Codex, Surplus, InferHub, DeepSeek and Rins; Activity counters cover only
+Claude Code and Codex. Opened from the popover footer (⌘S); built when opened and released when
+closed, so it costs nothing otherwise. Activity is counted at ingest (ADR 0006).
 The window opens centered, remembers its position, and recenters saved positions outside the visible
 screen. ⌘W closes it.
 
@@ -413,33 +449,44 @@ and hides.
   so the figure reads high until it recovers.
 - **Models**: a table bundled with the app holds each current model's Artificial Analysis
   Intelligence Index score, cost per Benchmark Task and minutes per Benchmark Task, at maximum
-  effort, with the date it was copied. Tasks a week = full week ÷ cost per Benchmark Task, which
-  assumes the limit counts every model at its API price. Models are listed by score.
+  effort, with the date it was copied. Tasks a week = full week ÷ cost per Benchmark Task, and tasks
+  per $1 = per $1 ÷ the same cost; both assume the limit counts every model at its API price. Models
+  are listed by score.
+- **Best value**: the plan's model with the most tasks among those within 5 points of the highest
+  score in the table, across Providers, so every plan meets one bar. A model within 10% of the most
+  tasks ties, and the smarter one wins. With no model near the top, the plan's smartest. What the
+  user runs doesn't count, so it can be a model they don't use.
 - **Your use**: the last 7 days' Theoretical Cost, today included, as Usage's 7d shows it, and each
-  model's share of it. Per $1 at your pace = that × 4.35 ÷ the list price. A meter shows it against a
-  full week, full at or above one; going over can follow an early reset.
+  model's share of it. A meter shows it against a full week. Going over can follow an early reset:
+  the bar is then full, with a notch where a full week ends. It counts as over only when the two
+  differ once rounded and the full week has no use without a known price.
 - **Display**: a column per plan, then one comparison of every model. Each column has two large
-  numbers of equal weight, API usage per $1 at your pace and if you use it all (without a known
-  price, the last 7 days' and a full week's dollars); the meter; and, with a known price, the total
-  dollars of both. Below, the heading links to the index, with a plain list of each model's score and
-  tasks per week beside a chart of one against the other. The chart has score 20 to 60 up and tasks
-  across on a log scale fitted to the models. Marks are circles for Claude and squares for Codex,
+  numbers, tasks per $1 on its best value and API usage per $1 (without a known price, tasks per week
+  and a full week's dollars); the meter; and, under it, the last 7 days' dollars of a full week's, or
+  over them. Below, the heading links to the index, with a plain list of each model's score and tasks
+  per $1 beside a chart of one against the other, both in tasks per week if the plan of any model
+  listed has no known price. The chart has score 20 to 60 up and tasks across on a log scale fitted to the models. Marks are circles for Claude and squares for Codex,
   filled when used in the last 7 days (5% or more) and outlined otherwise. Pointing at a row or a
   mark shows the full figures and dims the rest. Estimates keep two significant figures, and a +
   marks a figure with use that has no known price.
 - **How this is worked out**: a button at the bottom opens the workings, the assumptions and the
   source in a popover. The copied image leaves it out.
 
-## 15. Accounts (ADR 0010)
+## 15. Accounts (ADR 0010, ADR 0013)
 
 A Provider has one or more Accounts, and its own Limit Windows are their Pool. With one Account, everything works as it did before Accounts.
 
 ### Where Accounts come from
 1. **The default login**: §4. This is the Active Account. It keeps being fetched directly, so it keeps its plan name, Banked Resets and fallbacks, whatever else is on.
-2. **Extra login folders**: folders directly in the home directory named `.claude*` or `.codex*` that hold a login, looked for on every check, because a GUI app can't see the shell's `CLAUDE_CONFIG_DIR` or `CODEX_HOME`. Each has a toggle in Settings, on by default, and one found after launch can enable its Provider, unless the user turned that off. Strictly read-only, like the default login (ADR 0001).
+2. **Extra login folders**: folders directly in the home directory named `.claude*`, `.codex*`, `.grok*` or `.copilot*` that hold a login, looked for on every check, because a GUI app can't see the shell's `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GROK_HOME` or `COPILOT_HOME`. Each has a toggle in Settings, on by default, and one found after launch can enable its Provider, unless the user turned that off. Strictly read-only, like the default login (ADR 0001).
    - **Claude**: `<folder>/.credentials.json`, else the Keychain item `Claude Code-credentials-<first 8 hex digits of the SHA-256 of the folder's path>`, read through `/usr/bin/security`. Presence is checked with an attribute-only lookup. Name and identity come from `oauthAccount` in `<folder>/.claude.json`. The fix for an expired login names the folder: run `CLAUDE_CONFIG_DIR=~/.claude_side claude` once.
    - **Codex**: `<folder>/auth.json`, with the email in its `id_token`. The fix: run `CODEX_HOME=~/.codex_alt codex` once.
-3. **claude-swap**: off by default, turned on in Settings, where its note says it may renew idle logins itself. Display only: Tinybar never switches accounts.
+   - **Grok**: `<folder>/auth.json`, read as the default login is (ADR 0012), with the same custom-deployment checks. The fix: `GROK_HOME=~/.grok_work grok login`.
+   - **Copilot**: `<folder>/config.json` names the Copilot CLI's user. Its token is the file's, or `gh`'s for the same user, or, for a folder the user added, the Keychain's, which may ask. An editor plugin's or `gh`'s other logins never stand in for a folder's. The fix: `COPILOT_HOME=~/.copilot_work copilot login`.
+   - **OpenCode Go**: a data folder (`$XDG_DATA_HOME/opencode`) holding `opencode.db` or `auth.json`, read as the default one is (§4). The home folder names none of these, so they are only added. Limits only: token history stays with the default database.
+   - **Added folders**: a login kept anywhere else (another tool's store, a `CODEX_HOME` in `~/.config`) is added by hand, never searched for: Tinybar doesn't depend on where other apps keep theirs. Settings → Other logins has **Add folder…**, a folder picker that turns down a folder with no login, and **Copy prompt for your agent**, a prompt for the user's coding agent to find such folders by checking only that the files exist, and add each with `defaults write <domain> addedLoginFolders -array-add <path>`. The prompt, the picker's check and the home-folder names all come from one table of CLIs. The list is read afresh on every check, so a folder added from outside shows up on the next one. One folder can hold several CLIs' logins; `auth.json` is Codex's, Grok's and OpenCode's, so each CLI's own reading decides. Added folders are read like the others, Claude's and Codex's logs count (§9), and the fix for an expired login names the whole path. One without a login stays listed as such until removed.
+3. **Other Copilot users**: every user the Copilot CLI is signed in as (`loggedInUsers`), an editor plugin's login, and every user `gh` holds for github.com or a `*.ghe.com` host, other than the default login. The default login's rules apply: a token that takes a Keychain prompt, and `gh`'s users, only once the user turned Copilot on. A user with no Copilot plan is left out, as `gh` holds GitHub accounts used for other work. Shown in Settings with what holds it ("gh · github.com").
+4. **claude-swap**: off by default, turned on in Settings, where its note says it may renew idle logins itself. Display only: Tinybar never switches accounts.
    - Runs exactly `cswap list --json` on the normal poll: no shell, no other arguments, from `~/.local/bin`, `/opt/homebrew/bin` or `/usr/local/bin`. Terminated after 30 s, and output over 256 KB is rejected.
    - Requires `schemaVersion` 1. Anything else, a failure or an error object keeps the last good reading and marks those Accounts Stale, says why in Settings, and never touches the default login.
    - Reads only `number`, `email`, `organizationUuid`, `organizationName`, `alias`, `active`, `disabled`, `usageStatus`, `usage` (`fiveHour`, `sevenDay`, `scoped`, `spend`), `lastGoodUsage` and their fetch times. A reading is dated by its own fetch time, not by when `cswap` ran. Raw output is never logged or kept.
@@ -448,7 +495,7 @@ A Provider has one or more Accounts, and its own Limit Windows are their Pool. W
 
 The browser fallback's numbers (§4) aren't filed under the CLI's login, since that browser may be signed in as someone else: the default login then counts as having no readable email.
 
-Cursor, Gemini and OpenCode Go have only the default login.
+Cursor and Gemini have only the default login: Cursor keeps one per app, and the Antigravity CLI always uses `~/.gemini/antigravity-cli`.
 
 ### Identity and names
 - An Account's identity is its email and organization, lowercased, and pins, alert state and `limit_reading` store only a SHA-256 hash of them. (Log paths in `file_cursor` can still name one: claude-swap names its `cswap run` profiles after the account.) An Account with no readable email uses a hash of its folder's path. The same identity found twice is one Account; the default login wins, then a folder, then claude-swap.
